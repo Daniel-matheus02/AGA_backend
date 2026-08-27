@@ -1,0 +1,39 @@
+services:
+  api:
+    image: registry.example.com/grupo-aga/api:${AGA_API_TAG:?AGA_API_TAG is required}
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DATABASE_URL_FILE: /run/secrets/database_url
+      REDIS_URL_FILE: /run/secrets/redis_url
+      JWT_ACCESS_SECRET_FILE: /run/secrets/jwt_access_secret
+      FIELD_ENCRYPTION_KEY_BASE64_FILE: /run/secrets/field_encryption_key
+      TRACKING_WEBHOOK_SECRET_FILE: /run/secrets/tracking_webhook_secret
+      PAYMENT_WEBHOOK_SECRET_FILE: /run/secrets/payment_webhook_secret
+      PAYMENT_PROVIDER_MODE: external
+      JWT_ISSUER: grupo-aga-api
+      JWT_AUDIENCE: grupo-aga-apps
+      ACCESS_TOKEN_TTL_SECONDS: 600
+      REFRESH_TOKEN_TTL_DAYS: 30
+      ADMIN_MFA_REQUIRED: "true"
+      CORS_ORIGINS: https://app.aga.example,https://lojista.aga.example,https://admin.aga.example
+    secrets:
+      - database_url
+      - redis_url
+      - jwt_access_secret
+      - field_encryption_key
+      - tracking_webhook_secret
+      - payment_webhook_secret
+    read_only: true
+    tmpfs: ["/tmp"]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    restart: unless-stopped
+
+secrets:
+  database_url: { external: true }
+  redis_url: { external: true }
+  jwt_access_secret: { external: true }
+  field_encryption_key: { external: true }
+  tracking_webhook_secret: { external: true }
+  payment_webhook_secret: { external: true }

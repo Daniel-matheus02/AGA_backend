@@ -1,0 +1,7 @@
+{
+  "name": "@grupo-aga/api-client",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "peerDependencies": { "socket.io-client": "^4.8.1" }
+}
