@@ -1,0 +1,441 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Role {
+  CLIENT
+  MERCHANT
+  ADMIN
+  SUPPORT
+  FINANCE
+  TRACKING_OPERATOR
+}
+
+enum UserStatus {
+  ACTIVE
+  BLOCKED
+  PENDING
+}
+enum CreditRequestStatus {
+  PENDING
+  UNDER_REVIEW
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+enum OrderStatus {
+  PENDING_CLIENT_AUTHORIZATION
+  AUTHORIZED
+  REJECTED
+  CANCELLED
+  SETTLED
+}
+enum PaymentStatus {
+  PENDING
+  PAID
+  FAILED
+  REVERSED
+}
+enum SettlementStatus {
+  PENDING
+  SCHEDULED
+  PAID
+  FAILED
+}
+enum TrackerStatus {
+  ONLINE
+  OFFLINE
+  MAINTENANCE
+  DISABLED
+}
+enum PolicyStatus {
+  PENDING
+  ACTIVE
+  SUSPENDED
+  CANCELLED
+  EXPIRED
+}
+enum AlertSeverity {
+  INFO
+  WARNING
+  CRITICAL
+}
+enum IdempotencyStatus {
+  PROCESSING
+  COMPLETED
+}
+
+model Tenant {
+  id        String   @id @default(uuid())
+  name      String
+  slug      String   @unique
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  users     User[]
+  merchants Merchant[]
+  products  Product[]
+  creditRequests CreditRequest[]
+  orders    Order[]
+  trackers  Tracker[]
+  payments  Payment[]
+  policies  InsurancePolicy[]
+}
+
+model User {
+  id                 String     @id @default(uuid())
+  tenantId           String
+  tenant             Tenant     @relation(fields: [tenantId], references: [id])
+  merchantId         String?
+  merchant           Merchant?  @relation(fields: [merchantId], references: [id])
+  role               Role
+  status             UserStatus @default(ACTIVE)
+  name               String
+  email              String
+  cpfHash             String?
+  passwordHash       String
+  failedLoginCount   Int        @default(0)
+  lockedUntil        DateTime?
+  mfaEnabled         Boolean    @default(false)
+  mfaSecretEncrypted String?
+  createdAt          DateTime   @default(now())
+  updatedAt          DateTime   @updatedAt
+  sessions           Session[]
+  creditRequests     CreditRequest[]
+  creditAccount      CreditAccount?
+  clientOrders       Order[]    @relation("ClientOrders")
+  trackers           Tracker[]
+  notifications      Notification[]
+  payments           Payment[]
+  policies           InsurancePolicy[]
+  auditLogs          AuditLog[]
+  idempotencyRecords IdempotencyRecord[]
+
+  @@unique([tenantId, email])
+  @@index([tenantId, role, status])
+}
+
+model Session {
+  id               String   @id @default(uuid())
+  userId           String
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  refreshTokenHash String
+  userAgent        String?
+  ipAddress        String?
+  expiresAt        DateTime
+  revokedAt        DateTime?
+  replacedById     String?
+  createdAt        DateTime @default(now())
+  lastUsedAt       DateTime @default(now())
+
+  @@index([userId, expiresAt])
+}
+
+model Merchant {
+  id          String   @id @default(uuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id])
+  legalName   String
+  tradeName   String
+  cnpjHash    String
+  active      Boolean  @default(true)
+  feeBps      Int      @default(300)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  users       User[]
+  products    Product[]
+  orders      Order[]
+  settlements Settlement[]
+
+  @@unique([tenantId, cnpjHash])
+}
+
+model Product {
+  id          String   @id @default(uuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id])
+  merchantId  String
+  merchant    Merchant @relation(fields: [merchantId], references: [id])
+  name        String
+  description String?
+  category    String
+  priceCents  BigInt
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  orders      Order[]
+
+  @@index([tenantId, active, category])
+  @@index([merchantId, active])
+}
+
+model CreditRequest {
+  id                 String @id @default(uuid())
+  tenantId           String
+  tenant             Tenant @relation(fields: [tenantId], references: [id])
+  userId             String
+  user               User   @relation(fields: [userId], references: [id])
+  amountCents        BigInt
+  dailyInstallments  Int
+  dailyAmountCents   BigInt
+  status             CreditRequestStatus @default(PENDING)
+  decisionReason     String?
+  decidedByUserId    String?
+  decidedAt          DateTime?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@index([tenantId, status, createdAt])
+  @@index([userId, createdAt])
+}
+
+model CreditAccount {
+  id             String @id @default(uuid())
+  userId         String @unique
+  user           User   @relation(fields: [userId], references: [id])
+  limitCents     BigInt @default(0)
+  usedCents      BigInt @default(0)
+  blockedCents   BigInt @default(0)
+  version        Int    @default(1)
+  updatedAt      DateTime @updatedAt
+  createdAt      DateTime @default(now())
+}
+
+model Order {
+  id             String   @id @default(uuid())
+  tenantId       String
+  tenant         Tenant   @relation(fields: [tenantId], references: [id])
+  clientId       String
+  client         User     @relation("ClientOrders", fields: [clientId], references: [id])
+  merchantId     String
+  merchant       Merchant @relation(fields: [merchantId], references: [id])
+  productId      String
+  product        Product  @relation(fields: [productId], references: [id])
+  amountCents    BigInt
+  feeCents       BigInt
+  netCents       BigInt
+  status         OrderStatus @default(PENDING_CLIENT_AUTHORIZATION)
+  authorizationExpiresAt DateTime
+  authorizedAt   DateTime?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  settlement     Settlement?
+
+  @@index([tenantId, status, createdAt])
+  @@index([clientId, status])
+  @@index([merchantId, status])
+}
+
+model Payment {
+  id          String @id @default(uuid())
+  tenantId    String
+  tenant      Tenant @relation(fields: [tenantId], references: [id])
+  userId      String
+  user        User @relation(fields: [userId], references: [id])
+  amountCents BigInt
+  dueDate     DateTime
+  paidAt      DateTime?
+  status      PaymentStatus @default(PENDING)
+  providerReference String? @unique
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([tenantId, status, dueDate])
+  @@index([userId, status, dueDate])
+}
+
+model InsurancePolicy {
+  id                String @id @default(uuid())
+  tenantId          String
+  tenant            Tenant @relation(fields: [tenantId], references: [id])
+  userId            String
+  user              User @relation(fields: [userId], references: [id])
+  trackerId         String?
+  tracker           Tracker? @relation(fields: [trackerId], references: [id])
+  provider          String
+  providerReference String @unique
+  status            PolicyStatus @default(PENDING)
+  coverage          Json
+  startsAt          DateTime
+  endsAt            DateTime
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([tenantId, status, endsAt])
+  @@index([userId, status])
+}
+
+model Settlement {
+  id          String @id @default(uuid())
+  merchantId  String
+  merchant    Merchant @relation(fields: [merchantId], references: [id])
+  orderId     String @unique
+  order       Order @relation(fields: [orderId], references: [id])
+  grossCents  BigInt
+  feeCents    BigInt
+  netCents    BigInt
+  scheduledFor DateTime
+  paidAt      DateTime?
+  status      SettlementStatus @default(PENDING)
+  createdAt   DateTime @default(now())
+
+  @@index([merchantId, status, scheduledFor])
+}
+
+model Tracker {
+  id          String @id @default(uuid())
+  tenantId    String
+  tenant      Tenant @relation(fields: [tenantId], references: [id])
+  userId      String
+  user        User @relation(fields: [userId], references: [id])
+  externalId  String @unique
+  plate       String
+  vehicleModel String
+  status      TrackerStatus @default(OFFLINE)
+  lastSeenAt  DateTime?
+  lastLatitude Decimal? @db.Decimal(9, 6)
+  lastLongitude Decimal? @db.Decimal(9, 6)
+  lastSpeedKph Decimal? @db.Decimal(6, 2)
+  batteryPct  Int?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  points      TrackingPoint[]
+  alerts      TrackingAlert[]
+  policies    InsurancePolicy[]
+
+  @@unique([tenantId, plate])
+  @@index([tenantId, status, lastSeenAt])
+}
+
+model TrackingPoint {
+  id          BigInt @id @default(autoincrement())
+  trackerId   String
+  tracker     Tracker @relation(fields: [trackerId], references: [id], onDelete: Cascade)
+  latitude    Decimal @db.Decimal(9, 6)
+  longitude   Decimal @db.Decimal(9, 6)
+  speedKph    Decimal @db.Decimal(6, 2)
+  heading     Int?
+  ignitionOn  Boolean?
+  batteryPct  Int?
+  recordedAt  DateTime
+  receivedAt  DateTime @default(now())
+
+  @@index([trackerId, recordedAt(sort: Desc)])
+}
+
+model TrackingAlert {
+  id          String @id @default(uuid())
+  trackerId   String
+  tracker     Tracker @relation(fields: [trackerId], references: [id])
+  type        String
+  severity    AlertSeverity
+  message     String
+  resolvedAt  DateTime?
+  createdAt   DateTime @default(now())
+
+  @@index([trackerId, resolvedAt, createdAt])
+}
+
+model Notification {
+  id        String @id @default(uuid())
+  userId    String
+  user      User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      String
+  title     String
+  body      String
+  data      Json?
+  readAt    DateTime?
+  createdAt DateTime @default(now())
+
+  @@index([userId, readAt, createdAt])
+}
+
+model LedgerTransaction {
+  id          String @id @default(uuid())
+  referenceType String
+  referenceId String
+  description String
+  createdAt   DateTime @default(now())
+  entries     LedgerEntry[]
+
+  @@unique([referenceType, referenceId])
+}
+
+model LedgerEntry {
+  id            String @id @default(uuid())
+  transactionId String
+  transaction   LedgerTransaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  accountCode   String
+  amountCents   BigInt
+  createdAt     DateTime @default(now())
+
+  @@index([accountCode, createdAt])
+}
+
+model OutboxEvent {
+  id            String @id @default(uuid())
+  tenantId      String
+  type          String
+  aggregateType String
+  aggregateId   String
+  payload       Json
+  audience      Json
+  attempts      Int @default(0)
+  lastError     String?
+  publishedAt   DateTime?
+  createdAt     DateTime @default(now())
+
+  @@index([tenantId, publishedAt, createdAt])
+}
+
+model IdempotencyRecord {
+  id            String @id @default(uuid())
+  userId        String
+  user          User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  routeKey      String
+  key           String
+  requestHash   String
+  status        IdempotencyStatus @default(PROCESSING)
+  responseCode  Int?
+  responseBody  Json?
+  expiresAt     DateTime
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([userId, routeKey, key])
+  @@index([expiresAt])
+}
+
+model WebhookReceipt {
+  id        String @id @default(uuid())
+  provider  String
+  eventId   String
+  receivedAt DateTime @default(now())
+  payloadHash String
+
+  @@unique([provider, eventId])
+}
+
+model AuditLog {
+  id          BigInt @id @default(autoincrement())
+  actorUserId String?
+  actor       User? @relation(fields: [actorUserId], references: [id])
+  tenantId    String?
+  action      String
+  resource    String
+  resourceId  String?
+  requestId   String
+  ipAddress   String?
+  userAgent   String?
+  bodyHash    String?
+  metadata    Json?
+  createdAt   DateTime @default(now())
+
+  @@index([tenantId, createdAt])
+  @@index([actorUserId, createdAt])
+}
