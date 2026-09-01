@@ -24,7 +24,7 @@ export class AuthService {
       await this.prisma.user.update({ where:{id:user.id}, data:{ failedLoginCount:failures, lockedUntil: failures >= 5 ? new Date(Date.now()+15*60_000) : null } });
       throw new UnauthorizedException('Invalid credentials');
     }
-    const adminMfaRequired = this.config.get<boolean>('ADMIN_MFA_REQUIRED');
+    const adminMfaRequired = this.config.get<string>('ADMIN_MFA_REQUIRED') === 'true';
     if ((user.mfaEnabled || (adminMfaRequired && user.role === 'ADMIN'))) {
       if (!user.mfaSecretEncrypted) throw new ForbiddenException('MFA enrollment is required');
       if (!dto.totpCode || !(await verifyOtp({ token:dto.totpCode, secret:this.crypto.decrypt(user.mfaSecretEncrypted) })).valid) throw new UnauthorizedException('Invalid MFA code');
