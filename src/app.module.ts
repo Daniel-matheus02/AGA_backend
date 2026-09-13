@@ -13,6 +13,7 @@ import { MarketplaceModule } from './marketplace/marketplace.module';
 import { TrackingModule } from './tracking/tracking.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { AdminModule } from './admin/admin.module';
+import { DbAdminModule } from './dbadmin/db-admin.module';
 import { RealtimeModule } from './realtime/realtime.module';
 import { HealthModule } from './health/health.module';
 import { PaymentsModule } from './payments/payments.module';
@@ -43,6 +44,7 @@ import { CommonModule } from './common/common.module';
     ProtectionModule,
     NotificationsModule,
     AdminModule,
+    DbAdminModule,
     RealtimeModule,
     HealthModule,
   ],

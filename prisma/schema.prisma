@@ -101,6 +101,8 @@ model User {
   passwordHash       String
   failedLoginCount   Int        @default(0)
   lockedUntil        DateTime?
+  lastBlockedAt      DateTime?
+  lastBlockReason    String?
   mfaEnabled         Boolean    @default(false)
   mfaSecretEncrypted String?
   createdAt          DateTime   @default(now())

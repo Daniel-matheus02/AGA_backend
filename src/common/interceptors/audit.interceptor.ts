@@ -13,7 +13,7 @@ export class AuditInterceptor implements NestInterceptor {
     if (!['POST','PUT','PATCH','DELETE'].includes(req.method)) return next.handle();
     const user = req.user as AuthenticatedUser | undefined;
     const sanitized = { ...(req.body ?? {}) };
-    for (const key of ['password','refreshToken','token','totpCode']) if (key in sanitized) sanitized[key] = '[REDACTED]';
+    for (const key of ['password','newPassword','refreshToken','token','totpCode','setupKey','connectionString']) if (key in sanitized) sanitized[key] = '[REDACTED]';
     return next.handle().pipe(tap({ next: () => {
       void this.prisma.auditLog.create({ data: {
         actorUserId: user?.sub,

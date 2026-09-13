@@ -35,7 +35,10 @@ async function bootstrap() {
     },
     credentials: true,
     methods: ['GET','POST','PUT','PATCH','DELETE','OPTIONS'],
-    allowedHeaders: ['Authorization','Content-Type','Idempotency-Key','X-Request-Id'],
+    // X-AGA-Setup-Key / X-Panel-Token são os cabeçalhos do painel /v1/db-admin
+    // (consumido pelo frontend separado `frontend_user_manager`). Sem eles aqui,
+    // o preflight do navegador bloqueia todas as chamadas do painel.
+    allowedHeaders: ['Authorization','Content-Type','Idempotency-Key','X-Request-Id','X-AGA-Setup-Key','X-Panel-Token'],
     exposedHeaders: ['X-Request-Id'],
     maxAge: 600,
   });

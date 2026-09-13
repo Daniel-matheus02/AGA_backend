@@ -4,9 +4,33 @@ import { createHash, randomUUID } from 'node:crypto';
 import { PrismaService } from '../database/prisma.service';
 import { EventsService } from '../events/events.service';
 import { AuthenticatedUser } from '../common/auth.types';
-import { CreateClientDto, CreateMerchantDto } from './dto';
+import { BlockUserDto, CreateClientDto, CreateMerchantDto, CreateUserDto, ListUsersQueryDto } from './dto';
 
 const DAY = 86_400_000;
+
+// Hash de senha padrão do sistema (mesmos parâmetros do seed e do login).
+const PASSWORD_HASH_OPTIONS = { type: argon2.argon2id, memoryCost: 65536, timeCost: 3, parallelism: 1 } as const;
+
+// Perfis que a central administrativa pode criar diretamente. MERCHANT fica de
+// fora: exige razão social/CNPJ e nasce junto do lojista em createMerchant.
+const STAFF_ROLES = ['ADMIN', 'SUPPORT', 'FINANCE', 'TRACKING_OPERATOR'] as const;
+
+// Campos devolvidos pela API. Nunca expõe passwordHash nem mfaSecretEncrypted.
+const USER_PUBLIC_SELECT = {
+  id: true,
+  merchantId: true,
+  role: true,
+  status: true,
+  name: true,
+  email: true,
+  mfaEnabled: true,
+  failedLoginCount: true,
+  lockedUntil: true,
+  lastBlockedAt: true,
+  lastBlockReason: true,
+  createdAt: true,
+  updatedAt: true,
+} as const;
 
 @Injectable()
 export class AdminService {
@@ -123,13 +147,20 @@ export class AdminService {
   }
 
   // --- Clientes -------------------------------------------------------------------
+  /**
+   * Lista os clientes do tenant com `select` explícito: o `include` anterior
+   * devolvia o registro inteiro do usuário — incluindo passwordHash e
+   * mfaSecretEncrypted — para o navegador.
+   */
   async listClients(user: AuthenticatedUser) {
     return this.prisma.user.findMany({
       where: { tenantId: user.tenantId, role: 'CLIENT' },
-      include: {
+      select: {
+        ...USER_PUBLIC_SELECT,
+        cpfHash: true,
         creditAccount: true,
         trackers: { select: { plate: true, vehicleModel: true, status: true } },
-        creditRequests: { orderBy: { createdAt: 'desc' }, take: 1 },
+        creditRequests: { orderBy: { createdAt: 'desc' }, take: 1, select: { id: true, amountCents: true, status: true, createdAt: true } },
       },
       orderBy: { createdAt: 'desc' },
     });
@@ -140,7 +171,7 @@ export class AdminService {
     const email = dto.email.trim().toLowerCase();
     const existing = await this.prisma.user.findUnique({ where: { tenantId_email: { tenantId, email } } });
     if (existing) throw new BadRequestException('Já existe um usuário com esse e-mail');
-    const passwordHash = await argon2.hash(dto.password, { type: argon2.argon2id, memoryCost: 65536, timeCost: 3, parallelism: 1 });
+    const passwordHash = await argon2.hash(dto.password, PASSWORD_HASH_OPTIONS);
     return this.prisma.$transaction(async (tx) => {
       const client = await tx.user.create({
         data: {
@@ -152,6 +183,7 @@ export class AdminService {
           cpfHash: dto.cpf ? createHash('sha256').update(dto.cpf.trim()).digest('hex') : undefined,
           passwordHash,
         },
+        select: USER_PUBLIC_SELECT,
       });
       if (dto.limitCents) {
         await tx.creditAccount.upsert({
@@ -163,6 +195,97 @@ export class AdminService {
       await this.events.append({ tenantId, type: 'admin.client.created', aggregateType: 'User', aggregateId: client.id, payload: { clientId: client.id, name: client.name, createdByUserId: user.sub }, audience: ['role:ADMIN', 'role:FINANCE', 'role:SUPPORT'] }, tx);
       return client;
     });
+  }
+
+  // --- Usuários -------------------------------------------------------------------
+  /** Lista os usuários do tenant (todos os perfis) sem expor credenciais. */
+  async listUsers(user: AuthenticatedUser, filters: ListUsersQueryDto = {}) {
+    return this.prisma.user.findMany({
+      where: { tenantId: user.tenantId, ...(filters.role ? { role: filters.role } : {}), ...(filters.status ? { status: filters.status } : {}) },
+      select: USER_PUBLIC_SELECT,
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  /**
+   * Cria um usuário do tenant. CLIENT e perfis de equipe são atendidos aqui;
+   * MERCHANT precisa dos dados da empresa e continua em `POST /admin/merchants`.
+   */
+  async createUser(user: AuthenticatedUser, dto: CreateUserDto) {
+    if (dto.role === 'MERCHANT') {
+      throw new BadRequestException('Para criar o acesso de um lojista use POST /admin/merchants (razão social e CNPJ são obrigatórios)');
+    }
+    if (dto.role === 'CLIENT') {
+      return this.createClient(user, { name: dto.name, email: dto.email, password: dto.password, cpf: dto.cpf, limitCents: dto.limitCents });
+    }
+    if (!STAFF_ROLES.includes(dto.role as (typeof STAFF_ROLES)[number])) {
+      throw new BadRequestException('Perfil inválido para criação de usuário');
+    }
+    const tenantId = user.tenantId;
+    const email = dto.email.trim().toLowerCase();
+    const existing = await this.prisma.user.findUnique({ where: { tenantId_email: { tenantId, email } } });
+    if (existing) throw new BadRequestException('Já existe um usuário com esse e-mail');
+    const passwordHash = await argon2.hash(dto.password, PASSWORD_HASH_OPTIONS);
+    return this.prisma.$transaction(async (tx) => {
+      const created = await tx.user.create({
+        data: { tenantId, role: dto.role, status: 'ACTIVE', name: dto.name, email, passwordHash },
+        select: USER_PUBLIC_SELECT,
+      });
+      await this.events.append({ tenantId, type: 'admin.user.created', aggregateType: 'User', aggregateId: created.id, payload: { userId: created.id, role: created.role, email: created.email, createdByUserId: user.sub }, audience: ['role:ADMIN', 'role:FINANCE', 'role:SUPPORT'] }, tx);
+      return created;
+    });
+  }
+
+  /**
+   * Remoção lógica (soft delete): marca o usuário como BLOCKED e revoga todas as
+   * sessões abertas. Nenhuma linha de histórico (crédito, pedidos, pagamentos,
+   * apólices, auditoria) é apagada — um DELETE físico falharia nas FKs.
+   */
+  async blockUser(actor: AuthenticatedUser, userId: string, dto: BlockUserDto = {}) {
+    const target = await this.findTenantUser(actor, userId);
+    if (target.id === actor.sub) throw new BadRequestException('Você não pode remover o seu próprio acesso');
+    if (target.status === 'BLOCKED') throw new BadRequestException('Este usuário já está removido');
+    if (target.role === 'ADMIN') await this.assertNotLastActiveAdmin(actor.tenantId, userId);
+    const now = new Date();
+    return this.prisma.$transaction(async (tx) => {
+      const updated = await tx.user.update({
+        where: { id: target.id },
+        data: { status: 'BLOCKED', lastBlockedAt: now, lastBlockReason: dto.reason ?? null },
+        select: USER_PUBLIC_SELECT,
+      });
+      // Kill switch imediato: o JwtStrategy revalida a sessão no banco a cada
+      // requisição, então nada mais é aceito a partir daqui.
+      const sessions = await tx.session.updateMany({ where: { userId: target.id, revokedAt: null }, data: { revokedAt: now } });
+      await this.events.append({ tenantId: actor.tenantId, type: 'admin.user.blocked', aggregateType: 'User', aggregateId: target.id, payload: { userId: target.id, role: target.role, email: target.email, reason: dto.reason ?? null, revokedSessions: sessions.count, blockedByUserId: actor.sub }, audience: ['role:ADMIN', 'role:FINANCE', 'role:SUPPORT'] }, tx);
+      return { ...updated, revokedSessions: sessions.count };
+    });
+  }
+
+  /** Reverte a remoção lógica devolvendo o acesso (status ACTIVE). */
+  async unblockUser(actor: AuthenticatedUser, userId: string) {
+    const target = await this.findTenantUser(actor, userId);
+    if (target.status === 'ACTIVE') throw new BadRequestException('Este usuário já está ativo');
+    return this.prisma.$transaction(async (tx) => {
+      const updated = await tx.user.update({
+        where: { id: target.id },
+        data: { status: 'ACTIVE', failedLoginCount: 0, lockedUntil: null, lastBlockedAt: null, lastBlockReason: null },
+        select: USER_PUBLIC_SELECT,
+      });
+      await this.events.append({ tenantId: actor.tenantId, type: 'admin.user.unblocked', aggregateType: 'User', aggregateId: target.id, payload: { userId: target.id, role: target.role, email: target.email, unblockedByUserId: actor.sub }, audience: ['role:ADMIN', 'role:FINANCE', 'role:SUPPORT'] }, tx);
+      return updated;
+    });
+  }
+
+  /** Busca escopada por tenant: um id de outro tenant vira 404, não vazamento. */
+  private async findTenantUser(actor: AuthenticatedUser, userId: string) {
+    const target = await this.prisma.user.findFirst({ where: { id: userId, tenantId: actor.tenantId }, select: { id: true, role: true, status: true, email: true, name: true } });
+    if (!target) throw new NotFoundException('Usuário não encontrado');
+    return target;
+  }
+
+  private async assertNotLastActiveAdmin(tenantId: string, userId: string) {
+    const activeAdmins = await this.prisma.user.count({ where: { tenantId, role: 'ADMIN', status: 'ACTIVE', id: { not: userId } } });
+    if (activeAdmins === 0) throw new BadRequestException('Não é possível remover o último administrador ativo do tenant');
   }
 
   // --- Lojistas -------------------------------------------------------------------
