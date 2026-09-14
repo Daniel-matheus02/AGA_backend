@@ -43,6 +43,24 @@ describe('DTOs do painel aceitam o token vindo só do cabeçalho', () => {
     ).resolves.toBeDefined();
   });
 
+  it('createUser aceita merchantId (inclusive null) — payload real do modal', async () => {
+    // Regressão: o modal de "Novo usuário" sempre inclui `merchantId`, null
+    // quando nenhuma loja é escolhida. Sem o campo no DTO, o
+    // forbidNonWhitelisted recusava com "property merchantId should not exist".
+    await expect(
+      asBody(CreateAppUserDto, {
+        name: 'Teste da Silva', email: 'teste@emunah.com', password: 'senha12345',
+        role: 'CLIENT', status: 'ACTIVE', merchantId: null,
+      }),
+    ).resolves.toBeDefined();
+    await expect(
+      asBody(CreateAppUserDto, {
+        name: 'Teste da Silva', email: 'teste@emunah.com', password: 'senha12345',
+        role: 'CLIENT', merchantId: 'loja-1',
+      }),
+    ).resolves.toBeDefined();
+  });
+
   it('o login continua exigindo as credenciais de verdade', async () => {
     // A correção não pode ter afrouxado o login: corpo vazio segue sendo 400.
     await expect(asBody(PanelLoginDto, {})).rejects.toThrow(BadRequestException);

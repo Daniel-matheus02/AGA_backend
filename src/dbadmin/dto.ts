@@ -46,6 +46,12 @@ export class CreateAppUserDto extends PanelTokenDto {
   @IsString() @MinLength(8) @MaxLength(200) password: string;
   @IsEnum(Role) role: Role;
   @IsOptional() @IsEnum(UserStatus) status?: UserStatus;
+  /**
+   * Vínculo opcional com um lojista do tenant (o modal de novo usuário oferece
+   * o campo Lojista). `null`/ausente = usuário sem loja. O service valida que a
+   * loja existe no tenant antes de vincular.
+   */
+  @IsOptional() @IsString() @MaxLength(64) merchantId?: string | null;
 }
 
 /**

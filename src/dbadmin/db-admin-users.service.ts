@@ -104,10 +104,19 @@ export class DbAdminUsersService {
     const tenantId = actor.tenantId;
     const email = dto.email.trim().toLowerCase();
     await this.assertEmailFree(tenantId, email);
+    // Mesma validação de tenant do updateUser: a loja precisa existir NESTE
+    // tenant, senão um id de outro tenant criaria um vínculo cruzado.
+    if (dto.merchantId) {
+      const merchant = await this.prisma.merchant.findFirst({ where: { id: dto.merchantId, tenantId }, select: { id: true } });
+      if (!merchant) throw new BadRequestException('Lojista não encontrado neste tenant');
+    }
     const passwordHash = await argon2.hash(dto.password, PASSWORD_HASH_OPTIONS);
     return this.prisma.$transaction(async (tx) => {
       const created = await tx.user.create({
-        data: { tenantId, role: dto.role, status: dto.status ?? 'ACTIVE', name: dto.name.trim(), email, passwordHash },
+        data: {
+          tenantId, role: dto.role, status: dto.status ?? 'ACTIVE', name: dto.name.trim(), email, passwordHash,
+          merchantId: dto.merchantId ?? null,
+        },
         select: USER_PUBLIC_SELECT,
       });
       await this.audit(tx, actor, 'db-admin.user.created', 'User', created.id, {

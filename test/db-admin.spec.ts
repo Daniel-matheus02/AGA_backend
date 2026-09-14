@@ -180,6 +180,7 @@ describe('DbAdminUsersService — guard rails', () => {
         groupBy: jest.fn().mockResolvedValue([{ status: 'ACTIVE', _count: { _all: 1 } }]),
         count: jest.fn().mockResolvedValue(activeAdmins),
         update: jest.fn().mockImplementation(({ data }: any) => Promise.resolve({ ...target, ...data })),
+        create: jest.fn().mockImplementation(({ data }: any) => Promise.resolve({ id: 'novo', ...data })),
         delete: jest.fn().mockResolvedValue({ id: 'user-2', email: 'a@b.c' }),
       },
       session: { count: jest.fn().mockResolvedValue(0), updateMany: jest.fn().mockResolvedValue({ count: 3 }) },
@@ -301,6 +302,54 @@ describe('DbAdminUsersService — guard rails', () => {
     prisma.user.findUnique = jest.fn().mockResolvedValue({ id: 'outro' });
     await expect(service.createUser(actor, { name: 'Novo', email: 'x@y.z', password: 'senha-forte-1', role: 'CLIENT' as never })).rejects.toThrow(ConflictException);
     expect(prisma.user.delete).not.toHaveBeenCalled();
+  });
+
+  // Regressão: o modal de "Novo usuário" envia `merchantId` (null quando não há
+  // loja escolhida). Enquanto o campo não existia em CreateAppUserDto, o
+  // ValidationPipe global recusava a criação com 400 "property merchantId
+  // should not exist" — ou seja, criar usuário pelo painel estava quebrado.
+  it('cria usuário sem loja aceitando merchantId null', async () => {
+    const { prisma, service } = build(CLIENT);
+    prisma.user.create = jest.fn().mockImplementation(({ data }: any) => Promise.resolve({ id: 'novo', ...data }));
+    await service.createUser(actor, {
+      name: 'Teste da Silva', email: 'teste@emunah.com', password: 'senha-forte-1',
+      role: 'CLIENT' as never, status: 'ACTIVE' as never, merchantId: null,
+    });
+    expect(prisma.user.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ merchantId: null }) }),
+    );
+    // Sem id de loja não há o que validar: nenhuma consulta de merchant.
+    expect(prisma.merchant.findFirst).not.toHaveBeenCalled();
+  });
+
+  it('cria usuário vinculado a uma loja do tenant', async () => {
+    const { prisma, service } = build(CLIENT);
+    prisma.merchant.findFirst = jest.fn().mockResolvedValue({ id: 'loja-1' });
+    prisma.user.create = jest.fn().mockImplementation(({ data }: any) => Promise.resolve({ id: 'novo', ...data }));
+    await service.createUser(actor, {
+      name: 'Lojista', email: 'loja@emunah.com', password: 'senha-forte-1',
+      role: 'MERCHANT' as never, merchantId: 'loja-1',
+    });
+    // A loja é validada dentro do tenant do operador, nunca pelo id sozinho.
+    expect(prisma.merchant.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 'loja-1', tenantId: 'tenant-1' } }),
+    );
+    expect(prisma.user.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ merchantId: 'loja-1' }) }),
+    );
+  });
+
+  it('recusa criar usuário com loja de outro tenant', async () => {
+    const { prisma, service } = build(CLIENT);
+    prisma.merchant.findFirst = jest.fn().mockResolvedValue(null);
+    prisma.user.create = jest.fn();
+    await expect(
+      service.createUser(actor, {
+        name: 'Lojista', email: 'loja@emunah.com', password: 'senha-forte-1',
+        role: 'MERCHANT' as never, merchantId: 'loja-de-outro-tenant',
+      }),
+    ).rejects.toThrow('Lojista não encontrado neste tenant');
+    expect(prisma.user.create).not.toHaveBeenCalled();
   });
 });
 
