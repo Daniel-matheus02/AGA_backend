@@ -15,8 +15,20 @@ export class PanelLoginDto extends PanelSetupKeyDto {
   @IsString() @MinLength(1) @MaxLength(512) password: string;
 }
 
+/**
+ * Token do painel.
+ *
+ * O `DbAdminGuard` o lê do corpo OU do cabeçalho `x-panel-token`, e o frontend
+ * usa o cabeçalho. Por isso o campo é OPCIONAL aqui: exigi-lo no corpo fazia o
+ * ValidationPipe global (`forbidNonWhitelisted: true`) responder 400 em toda
+ * chamada autenticada por cabeçalho — o corpo `{}` do `auth/session`, por
+ * exemplo, era recusado antes mesmo de o handler rodar.
+ *
+ * A checagem de presença continua acontecendo, no guard: sem token no corpo e
+ * sem token no cabeçalho ele responde 401.
+ */
 export class PanelTokenDto {
-  @IsString() @MinLength(16) @MaxLength(4096) panelToken: string;
+  @IsOptional() @IsString() @MinLength(16) @MaxLength(4096) panelToken?: string;
 }
 
 // --- Usuários da aplicação (tabela User do Prisma) ---------------------------
