@@ -60,11 +60,10 @@ describe('AdminService — remoção de usuário', () => {
     expect(result).toEqual(expect.objectContaining({ id: 'user-2', status: 'BLOCKED', revokedSessions: 2 }));
   });
 
-  it('não devolve passwordHash nem mfaSecretEncrypted', async () => {
+  it('não devolve passwordHash', async () => {
     const { service } = build(CLIENT);
     const result: any = await service.blockUser(actor, 'user-2');
     expect(result.passwordHash).toBeUndefined();
-    expect(result.mfaSecretEncrypted).toBeUndefined();
   });
 
   it('recusa remover o próprio acesso', async () => {

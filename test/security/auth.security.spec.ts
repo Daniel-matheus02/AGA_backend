@@ -6,7 +6,7 @@
  *  - Bypass de lockout
  *  - JWT manipulation
  *  - Refresh token reuse / session fixation
- *  - MFA bypass
+ *  - MFA removido (totpCode extra é ignorado, nunca 400)
  *  - Mass assignment via campos extras
  */
 
@@ -182,32 +182,22 @@ describe('[SECURITY] Authentication & Session', () => {
     });
   });
 
-  // ── 5. MFA Bypass ───────────────────────────────────────────────────────
+  // ── 5. MFA removido ────────────────────────────────────────────────────
 
-  describe('5. MFA Bypass', () => {
-    it('deve rejeitar login sem totpCode quando MFA está ativo no admin', async () => {
-      // Simula cenário onde admin tem MFA ativo — sem fornecer o código deve falhar
+  describe('5. MFA removido', () => {
+    it('ignora um totpCode enviado: a senha é a única credencial', async () => {
+      // O MFA foi removido do produto. Enviar `totpCode` não pode nem ser
+      // rejeitado por validação nem virar segundo fator: o campo é ignorado.
       const res = await request(app.getHttpServer())
         .post(`${BASE}/auth/login`)
         .send({
           email: process.env.SEED_ADMIN_EMAIL ?? 'admin@aga.local',
           password: process.env.SEED_ADMIN_PASSWORD ?? 'CHANGE_ME_Admin_2026!',
-          // totpCode ausente propositalmente
+          totpCode: '000000',
         });
-      // Se MFA estiver ativo → 401 ou 403; se não estiver ativo no ambiente de teste → 200
-      // O teste garante que a resposta é coerente (nunca 500)
       expect([200, 401, 403]).toContain(res.status);
-    });
-
-    it('deve rejeitar totpCode inválido', async () => {
-      const res = await request(app.getHttpServer())
-        .post(`${BASE}/auth/login`)
-        .send({
-          email: process.env.SEED_ADMIN_EMAIL ?? 'admin@aga.local',
-          password: process.env.SEED_ADMIN_PASSWORD ?? 'CHANGE_ME_Admin_2026!',
-          totpCode: '000000', // código inválido
-        });
-      expect([401, 403]).toContain(res.status);
+      // Nunca 400: um `totpCode` extra não é erro de validação.
+      expect(res.status).not.toBe(400);
     });
   });
 

@@ -21,7 +21,6 @@ Backend de referência para três aplicações conectadas:
 
 - JWT curto e refresh token rotativo com detecção de reutilização.
 - Senhas em Argon2id.
-- MFA/TOTP opcional e obrigatório para administradores em produção.
 - RBAC por perfil e verificação de escopo por tenant, usuário e lojista.
 - Validação global com rejeição de campos desconhecidos.
 - Idempotência obrigatória em operações financeiras.
@@ -101,7 +100,6 @@ HMAC_SHA256(TRACKING_WEBHOOK_SECRET, timestamp + "." + rawBody)
 ## Antes de produção
 
 - Integrar provedor real de pagamento, seguro e rastreador.
-- Ativar MFA obrigatório para administrador.
 - Usar gerenciador de segredos, WAF, TLS e banco privado.
 - Executar migrations em pipeline separado.
 - Configurar backup com teste de restauração.

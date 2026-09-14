@@ -18,7 +18,7 @@ import {
 // criado aqui entra com o mesmo custo de argon2id dos demais.
 const PASSWORD_HASH_OPTIONS = { type: argon2.argon2id, memoryCost: 65536, timeCost: 3, parallelism: 1 } as const;
 
-/** Nunca devolvemos passwordHash nem mfaSecretEncrypted para o navegador. */
+/** Nunca devolvemos passwordHash para o navegador. */
 const USER_PUBLIC_SELECT = {
   id: true,
   tenantId: true,
@@ -27,7 +27,6 @@ const USER_PUBLIC_SELECT = {
   status: true,
   name: true,
   email: true,
-  mfaEnabled: true,
   failedLoginCount: true,
   lockedUntil: true,
   lastBlockedAt: true,
@@ -119,7 +118,7 @@ export class DbAdminUsersService {
   }
 
   /**
-   * Edita cadastro (nome, e-mail, papel, status, loja, MFA). Trocar o status
+   * Edita cadastro (nome, e-mail, papel, status, loja). Trocar o status
    * para BLOCKED derruba as sessões, igual à remoção lógica do AdminService.
    */
   async updateUser(actor: PanelActor, userId: string, dto: Omit<UpdateAppUserDto, 'panelToken'>) {
@@ -152,13 +151,6 @@ export class DbAdminUsersService {
         data.merchant = { connect: { id: merchant.id } };
       }
     }
-    if (dto.mfaEnabled !== undefined) {
-      data.mfaEnabled = dto.mfaEnabled;
-      // Desligar o MFA apaga o segredo: sem isso o segredo antigo continuaria
-      // valendo caso o MFA fosse religado.
-      if (!dto.mfaEnabled) data.mfaSecretEncrypted = null;
-    }
-
     if (Object.keys(data).length === 0) throw new BadRequestException('Nada para atualizar');
 
     const revokeSessions = dto.status !== undefined && dto.status !== 'ACTIVE';

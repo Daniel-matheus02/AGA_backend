@@ -3,14 +3,12 @@ import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import * as argon2 from 'argon2';
 import { randomBytes, randomUUID } from 'node:crypto';
-import { generateSecret, generateURI, verify as verifyOtp } from 'otplib';
 import { PrismaService } from '../database/prisma.service';
-import { CryptoService } from '../common/services/crypto.service';
 import { LoginDto } from './dto';
 
 @Injectable()
 export class AuthService {
-  constructor(private readonly prisma: PrismaService, private readonly jwt: JwtService, private readonly config: ConfigService, private readonly crypto: CryptoService) {}
+  constructor(private readonly prisma: PrismaService, private readonly jwt: JwtService, private readonly config: ConfigService) {}
 
   async login(dto: LoginDto, ip?: string, userAgent?: string) {
     const email = dto.email.trim().toLowerCase();
@@ -23,11 +21,6 @@ export class AuthService {
       const failures = user.failedLoginCount + 1;
       await this.prisma.user.update({ where:{id:user.id}, data:{ failedLoginCount:failures, lockedUntil: failures >= 5 ? new Date(Date.now()+15*60_000) : null } });
       throw new UnauthorizedException('Invalid credentials');
-    }
-    const adminMfaRequired = this.config.get<string>('ADMIN_MFA_REQUIRED') === 'true';
-    if ((user.mfaEnabled || (adminMfaRequired && user.role === 'ADMIN'))) {
-      if (!user.mfaSecretEncrypted) throw new ForbiddenException('MFA enrollment is required');
-      if (!dto.totpCode || !(await verifyOtp({ token:dto.totpCode, secret:this.crypto.decrypt(user.mfaSecretEncrypted) })).valid) throw new UnauthorizedException('Invalid MFA code');
     }
     await this.prisma.user.update({ where:{id:user.id}, data:{ failedLoginCount:0, lockedUntil:null } });
     const issued = await this.issueSession(user, ip, userAgent);
@@ -69,34 +62,6 @@ export class AuthService {
     return response;
   }
 
-
-  async beginMfa(userId:string,password:string){
-    const user=await this.prisma.user.findUnique({where:{id:userId}});
-    if(!user || !(await argon2.verify(user.passwordHash,password))) throw new UnauthorizedException('Invalid credentials');
-    const secret=generateSecret();
-    await this.prisma.user.update({where:{id:userId},data:{mfaSecretEncrypted:this.crypto.encrypt(secret),mfaEnabled:false}});
-    return {secret,otpauthUrl:generateURI({ issuer:'Grupo AGA', label:user.email, secret })};
-  }
-
-  async confirmMfa(userId:string,code:string){
-    const user=await this.prisma.user.findUnique({where:{id:userId}});
-    if(!user?.mfaSecretEncrypted) throw new ForbiddenException('MFA enrollment has not started');
-    const valid=(await verifyOtp({token:code,secret:this.crypto.decrypt(user.mfaSecretEncrypted)})).valid;
-    if(!valid) throw new UnauthorizedException('Invalid MFA code');
-    await this.prisma.user.update({where:{id:userId},data:{mfaEnabled:true}});
-    return {enabled:true};
-  }
-
-  async disableMfa(userId:string,password:string,code:string){
-    const user=await this.prisma.user.findUnique({where:{id:userId}});
-    if(!user || !(await argon2.verify(user.passwordHash,password))) throw new UnauthorizedException('Invalid credentials');
-    if(!user.mfaSecretEncrypted || !(await verifyOtp({token:code,secret:this.crypto.decrypt(user.mfaSecretEncrypted)})).valid) throw new UnauthorizedException('Invalid MFA code');
-    await this.prisma.$transaction([
-      this.prisma.user.update({where:{id:userId},data:{mfaEnabled:false,mfaSecretEncrypted:null}}),
-      this.prisma.session.updateMany({where:{userId,revokedAt:null},data:{revokedAt:new Date()}}),
-    ]);
-    return {enabled:false,sessionsRevoked:true};
-  }
 
   async logout(refreshToken: string) {
     try{

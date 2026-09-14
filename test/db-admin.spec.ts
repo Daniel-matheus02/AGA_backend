@@ -23,7 +23,6 @@ import { DbAdminGuard } from '../src/dbadmin/db-admin.guard';
 import { PanelAuthService } from '../src/dbadmin/panel-auth.service';
 import { PgAdminRolesService } from '../src/dbadmin/pg-admin-roles.service';
 import { parseConnectionString } from '../src/dbadmin/pg-connection.registry';
-import { CryptoService } from '../src/common/services/crypto.service';
 
 const SETUP_KEY = 'chave-de-setup-para-teste-com-mais-de-32-chars';
 const actor = { sub: 'admin-1', email: 'admin@aga.local', tenantId: 'tenant-1' };
@@ -37,7 +36,6 @@ const ENV: Record<string, unknown> = {
   JWT_AUDIENCE: 'grupo-aga-apps',
   TENANT_SLUG: 'grupo-aga',
   FIELD_ENCRYPTION_KEY_BASE64: Buffer.alloc(32, 7).toString('base64'),
-  ADMIN_MFA_REQUIRED: false,
 };
 
 function configWith(overrides: Record<string, unknown> = {}) {
@@ -53,7 +51,7 @@ function configWith(overrides: Record<string, unknown> = {}) {
 
 function panelAuth(overrides: Record<string, unknown> = {}) {
   const config = configWith(overrides);
-  return new PanelAuthService({} as never, config, new JwtService({}), new CryptoService(config));
+  return new PanelAuthService({} as never, config, new JwtService({}));
 }
 
 // --- Chave de setup ---------------------------------------------------------
@@ -160,7 +158,7 @@ describe('PanelAuthService — token do painel', () => {
 
   it('exige a chave de setup quando o token é usado para conectar ao Postgres', async () => {
     const auth = panelAuth();
-    const service = new PanelAuthService(prisma, configWith(), new JwtService({}), new CryptoService(configWith()));
+    const service = new PanelAuthService(prisma, configWith(), new JwtService({}));
     const token = await service['jwt'].signAsync(
       { sub: 'admin-1', scope: 'db-admin-panel', jti: 'j3' },
       { secret: ENV.JWT_ACCESS_SECRET as string, issuer: 'grupo-aga-api:db-admin', audience: 'aga-db-admin-panel', expiresIn: 60 },
@@ -205,10 +203,10 @@ describe('DbAdminUsersService — guard rails', () => {
 
   const CLIENT = {
     id: 'user-2', tenantId: 'tenant-1', role: 'CLIENT', status: 'ACTIVE',
-    name: 'Cliente', email: 'cliente@aga.local', merchantId: null, mfaEnabled: false,
+    name: 'Cliente', email: 'cliente@aga.local', merchantId: null,
   };
 
-  it('nunca devolve passwordHash nem mfaSecretEncrypted na listagem', async () => {
+  it('nunca devolve passwordHash na listagem', async () => {
     const { prisma, service } = build(CLIENT);
     prisma.user.findMany.mockResolvedValue([{ ...CLIENT, _count: { sessions: 2 } }]);
     const { users } = await service.listUsers(actor, {});
@@ -216,10 +214,9 @@ describe('DbAdminUsersService — guard rails', () => {
       expect.objectContaining({ select: expect.not.objectContaining({ passwordHash: true }) }),
     );
     const raw = users[0] as unknown as Record<string, unknown>;
-    // O tipo já não expõe esses campos; a checagem em runtime garante que o
-    // select não os traz escondidos no objeto serializado.
+    // O tipo já não expõe o campo; a checagem em runtime garante que o
+    // select não o traz escondido no objeto serializado.
     expect(raw.passwordHash).toBeUndefined();
-    expect(raw.mfaSecretEncrypted).toBeUndefined();
     expect(raw.activeSessions).toBe(2);
     expect(JSON.stringify(raw)).not.toContain('passwordHash');
   });

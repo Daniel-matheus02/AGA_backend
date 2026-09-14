@@ -10,7 +10,7 @@ Cliente, lojista e administrador compartilham a mesma API. Uma mudança é persi
 POST /v1/auth/login
 Content-Type: application/json
 
-{"email":"cliente@aga.local","password":"...","totpCode":"123456"}
+{"email":"cliente@aga.local","password":"..."}
 ```
 
 A resposta entrega `accessToken`, `refreshToken` e o perfil. No aplicativo móvel, guarde o refresh token no Keychain/Keystore. Em painel web, prefira backend-for-frontend ou cookie `HttpOnly`, `Secure` e `SameSite=Strict`; não use `localStorage` para refresh token.

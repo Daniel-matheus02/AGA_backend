@@ -20,7 +20,7 @@
 6. O cliente precisa autorizar compras iniciadas pelo lojista.
 7. Rastreamento e pagamentos só entram por webhooks assinados.
 8. Eventos podem ser entregues mais de uma vez; consumidores deduplicam por `event.id`.
-9. Admin em produção usa MFA.
+9. O acesso administrativo é protegido só por senha (MFA removido do produto).
 10. Histórico de localização tem retenção limitada e acesso auditado.
 
 ## Integrações externas pendentes
@@ -37,7 +37,7 @@ Cada integração deve entrar por uma interface/adaptador. Não espalhar SDK de 
 
 ### Autenticação
 
-- Login, refresh rotativo, logout e MFA funcionam.
+- Login, refresh rotativo e logout funcionam.
 - Refresh reutilizado revoga todas as sessões do usuário.
 - Perfis não conseguem acessar rotas de outro perfil.
 

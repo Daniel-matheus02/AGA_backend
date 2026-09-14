@@ -15,7 +15,6 @@ services:
       JWT_AUDIENCE: grupo-aga-apps
       ACCESS_TOKEN_TTL_SECONDS: 600
       REFRESH_TOKEN_TTL_DAYS: 30
-      ADMIN_MFA_REQUIRED: "true"
       CORS_ORIGINS: https://app.aga.example,https://lojista.aga.example,https://admin.aga.example
     secrets:
       - database_url

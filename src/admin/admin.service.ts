@@ -15,7 +15,7 @@ const PASSWORD_HASH_OPTIONS = { type: argon2.argon2id, memoryCost: 65536, timeCo
 // fora: exige razão social/CNPJ e nasce junto do lojista em createMerchant.
 const STAFF_ROLES = ['ADMIN', 'SUPPORT', 'FINANCE', 'TRACKING_OPERATOR'] as const;
 
-// Campos devolvidos pela API. Nunca expõe passwordHash nem mfaSecretEncrypted.
+// Campos devolvidos pela API. Nunca expõe passwordHash.
 const USER_PUBLIC_SELECT = {
   id: true,
   merchantId: true,
@@ -23,7 +23,6 @@ const USER_PUBLIC_SELECT = {
   status: true,
   name: true,
   email: true,
-  mfaEnabled: true,
   failedLoginCount: true,
   lockedUntil: true,
   lastBlockedAt: true,
@@ -149,8 +148,8 @@ export class AdminService {
   // --- Clientes -------------------------------------------------------------------
   /**
    * Lista os clientes do tenant com `select` explícito: o `include` anterior
-   * devolvia o registro inteiro do usuário — incluindo passwordHash e
-   * mfaSecretEncrypted — para o navegador.
+   * devolvia o registro inteiro do usuário — incluindo passwordHash — para o
+   * navegador.
    */
   async listClients(user: AuthenticatedUser) {
     return this.prisma.user.findMany({

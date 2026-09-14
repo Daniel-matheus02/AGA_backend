@@ -13,8 +13,6 @@ export class PanelSetupKeyDto {
 export class PanelLoginDto extends PanelSetupKeyDto {
   @IsEmail() email: string;
   @IsString() @MinLength(1) @MaxLength(512) password: string;
-  /** Código TOTP, exigido quando a conta ADMIN usa MFA. */
-  @IsOptional() @IsString() @Matches(/^[0-9]{6,8}$/) totpCode?: string;
 }
 
 export class PanelTokenDto {
@@ -48,7 +46,6 @@ export class UpdateAppUserDto extends PanelTokenDto {
   @IsOptional() @IsEnum(Role) role?: Role;
   @IsOptional() @IsEnum(UserStatus) status?: UserStatus;
   @IsOptional() @IsString() @MaxLength(64) merchantId?: string | null;
-  @IsOptional() @IsBoolean() mfaEnabled?: boolean;
 }
 
 export class ChangePasswordDto extends PanelTokenDto {

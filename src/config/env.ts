@@ -17,7 +17,6 @@ const schema = z.object({
   PAYMENT_WEBHOOK_SECRET: z.string().min(32),
   PAYMENT_PROVIDER_MODE: z.enum(['sandbox','external']).default('sandbox'),
   CORS_ORIGINS: z.string().default('http://localhost:5173'),
-  ADMIN_MFA_REQUIRED: z.coerce.boolean().default(false),
   // Painel de administração do banco de dados (`/v1/db-admin`). Sem a chave o
   // painel inteiro responde 403: ele fica indisponível por padrão.
   DB_ADMIN_SETUP_KEY: z.string().min(32).optional(),

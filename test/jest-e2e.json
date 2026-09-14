@@ -19,6 +19,5 @@
         }
       }
     ]
-  },
-  "transformIgnorePatterns": ["node_modules/(?!(?:@otplib|otplib|@scure|@noble)/)"]
+  }
 }

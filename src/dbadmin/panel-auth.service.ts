@@ -3,9 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import * as argon2 from 'argon2';
 import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
-import { verify as verifyOtp } from 'otplib';
 import { PrismaService } from '../database/prisma.service';
-import { CryptoService } from '../common/services/crypto.service';
 import { PanelLoginDto } from './dto';
 
 /** Claims do token do painel. `scope` impede que ele valha como token de API. */
@@ -43,7 +41,6 @@ export class PanelAuthService {
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
     private readonly jwt: JwtService,
-    private readonly crypto: CryptoService,
   ) {}
 
   /** Versão em HMAC-SHA256 da chave de setup, com um rótulo próprio. */
@@ -131,15 +128,7 @@ export class PanelAuthService {
       throw new UnauthorizedException('Credenciais inválidas');
     }
 
-    // O painel escreve em credenciais: com MFA habilitado (ou exigido para
-    // ADMIN), o código passa a ser obrigatório também aqui.
-    const mfaRequired = user.mfaEnabled || (this.config.get<boolean>('ADMIN_MFA_REQUIRED') && user.role === 'ADMIN');
-    if (mfaRequired) {
-      if (!user.mfaSecretEncrypted) throw new ForbiddenException('É necessário concluir o cadastro do MFA');
-      const valid = dto.totpCode && (await verifyOtp({ token: dto.totpCode, secret: this.crypto.decrypt(user.mfaSecretEncrypted) })).valid;
-      if (!valid) throw new UnauthorizedException('Código de MFA inválido');
-    }
-
+    // A senha é a única credencial além da chave de setup: não há segundo fator.
     await this.prisma.user.update({ where: { id: user.id }, data: { failedLoginCount: 0, lockedUntil: null } });
 
     const jti = randomUUID();
