@@ -1,0 +1,9 @@
+node_modules
+dist
+.env
+.env_railway_example
+coverage
+src/generated/prisma
+*.log
+.DS_Store
+*.tsbuildinfo
