@@ -8,8 +8,8 @@ export class AgaApiClient{
   private socket?:Socket;
   constructor(private readonly baseUrl:string,private readonly tokenStore:TokenStore){}
 
-  async login(email:string,password:string,totpCode?:string){
-    const tokens=await this.raw<Tokens>('/auth/login',{method:'POST',body:JSON.stringify({email,password,totpCode})},false);
+  async login(email:string,password:string){
+    const tokens=await this.raw<Tokens>('/auth/login',{method:'POST',body:JSON.stringify({email,password})},false);
     this.accessToken=tokens.accessToken;await this.tokenStore.setRefreshToken(tokens.refreshToken);return tokens.user;
   }
   async refresh(){

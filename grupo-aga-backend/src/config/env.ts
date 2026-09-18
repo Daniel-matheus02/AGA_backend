@@ -17,7 +17,12 @@ const schema = z.object({
   PAYMENT_WEBHOOK_SECRET: z.string().min(32),
   PAYMENT_PROVIDER_MODE: z.enum(['sandbox','external']).default('sandbox'),
   CORS_ORIGINS: z.string().default('http://localhost:5173'),
-  ADMIN_MFA_REQUIRED: z.coerce.boolean().default(false),
+  // Painel de administração do banco de dados (`/v1/db-admin`). Sem a chave o
+  // painel inteiro responde 403: ele fica indisponível por padrão.
+  DB_ADMIN_SETUP_KEY: z.string().min(32).optional(),
+  DB_ADMIN_TOKEN_TTL_MINUTES: z.coerce.number().int().min(5).max(720).default(30),
+  // TTL da connection string informada pelo operador para o PostgreSQL.
+  DB_ADMIN_PG_CONN_TTL_MINUTES: z.coerce.number().int().min(1).max(120).default(15),
 });
 
 export type Environment = z.infer<typeof schema>;

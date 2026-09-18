@@ -3,14 +3,18 @@ import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import * as argon2 from 'argon2';
 import { randomBytes, randomUUID } from 'node:crypto';
-import { generateSecret, generateURI, verify as verifyOtp } from 'otplib';
 import { PrismaService } from '../database/prisma.service';
-import { CryptoService } from '../common/services/crypto.service';
-import { LoginDto } from './dto';
+import { AuthenticatedUser } from '../common/auth.types';
+import { AuthEventsService } from './auth-events.service';
+import { ChangePasswordDto, LoginDto } from './dto';
+
+// Mesmos parâmetros do seed e do login: a senha trocada aqui tem exatamente o
+// mesmo custo de argon2id das demais.
+const PASSWORD_HASH_OPTIONS = { type: argon2.argon2id, memoryCost: 65536, timeCost: 3, parallelism: 1 } as const;
 
 @Injectable()
 export class AuthService {
-  constructor(private readonly prisma: PrismaService, private readonly jwt: JwtService, private readonly config: ConfigService, private readonly crypto: CryptoService) {}
+  constructor(private readonly prisma: PrismaService, private readonly jwt: JwtService, private readonly config: ConfigService, private readonly authEvents: AuthEventsService) {}
 
   async login(dto: LoginDto, ip?: string, userAgent?: string) {
     const email = dto.email.trim().toLowerCase();
@@ -23,11 +27,6 @@ export class AuthService {
       const failures = user.failedLoginCount + 1;
       await this.prisma.user.update({ where:{id:user.id}, data:{ failedLoginCount:failures, lockedUntil: failures >= 5 ? new Date(Date.now()+15*60_000) : null } });
       throw new UnauthorizedException('Invalid credentials');
-    }
-    const adminMfaRequired = this.config.get<boolean>('ADMIN_MFA_REQUIRED');
-    if ((user.mfaEnabled || (adminMfaRequired && user.role === 'ADMIN'))) {
-      if (!user.mfaSecretEncrypted) throw new ForbiddenException('MFA enrollment is required');
-      if (!dto.totpCode || !(await verifyOtp({ token:dto.totpCode, secret:this.crypto.decrypt(user.mfaSecretEncrypted) })).valid) throw new UnauthorizedException('Invalid MFA code');
     }
     await this.prisma.user.update({ where:{id:user.id}, data:{ failedLoginCount:0, lockedUntil:null } });
     const issued = await this.issueSession(user, ip, userAgent);
@@ -45,7 +44,10 @@ export class AuthService {
     const accessToken = await this.jwt.signAsync({
       sub:user.id, tenantId:user.tenantId, role:user.role, merchantId:user.merchantId, sessionId, email:user.email,
     }, { secret:this.config.getOrThrow('JWT_ACCESS_SECRET'), issuer:this.config.getOrThrow('JWT_ISSUER'), audience:this.config.getOrThrow('JWT_AUDIENCE'), expiresIn:this.config.getOrThrow<number>('ACCESS_TOKEN_TTL_SECONDS') });
-    return { accessToken, refreshToken, expiresIn:this.config.getOrThrow<number>('ACCESS_TOKEN_TTL_SECONDS'), user:{ id:user.id, role:user.role, merchantId:user.merchantId }, sessionId };
+    // O `user` da resposta é intencionalmente mínimo (sem hash, sem status, sem
+    // tenant). Incluímos `email` porque o app precisa exibir quem está logado, e
+    // a fonte da verdade é o registro em `User` — nunca o que o cliente enviou.
+    return { accessToken, refreshToken, expiresIn:this.config.getOrThrow<number>('ACCESS_TOKEN_TTL_SECONDS'), user:{ id:user.id, role:user.role, merchantId:user.merchantId, email:user.email }, sessionId };
   }
 
   private parseRefreshToken(refreshToken:string){
@@ -70,34 +72,6 @@ export class AuthService {
   }
 
 
-  async beginMfa(userId:string,password:string){
-    const user=await this.prisma.user.findUnique({where:{id:userId}});
-    if(!user || !(await argon2.verify(user.passwordHash,password))) throw new UnauthorizedException('Invalid credentials');
-    const secret=generateSecret();
-    await this.prisma.user.update({where:{id:userId},data:{mfaSecretEncrypted:this.crypto.encrypt(secret),mfaEnabled:false}});
-    return {secret,otpauthUrl:generateURI({ issuer:'Grupo AGA', label:user.email, secret })};
-  }
-
-  async confirmMfa(userId:string,code:string){
-    const user=await this.prisma.user.findUnique({where:{id:userId}});
-    if(!user?.mfaSecretEncrypted) throw new ForbiddenException('MFA enrollment has not started');
-    const valid=(await verifyOtp({token:code,secret:this.crypto.decrypt(user.mfaSecretEncrypted)})).valid;
-    if(!valid) throw new UnauthorizedException('Invalid MFA code');
-    await this.prisma.user.update({where:{id:userId},data:{mfaEnabled:true}});
-    return {enabled:true};
-  }
-
-  async disableMfa(userId:string,password:string,code:string){
-    const user=await this.prisma.user.findUnique({where:{id:userId}});
-    if(!user || !(await argon2.verify(user.passwordHash,password))) throw new UnauthorizedException('Invalid credentials');
-    if(!user.mfaSecretEncrypted || !(await verifyOtp({token:code,secret:this.crypto.decrypt(user.mfaSecretEncrypted)})).valid) throw new UnauthorizedException('Invalid MFA code');
-    await this.prisma.$transaction([
-      this.prisma.user.update({where:{id:userId},data:{mfaEnabled:false,mfaSecretEncrypted:null}}),
-      this.prisma.session.updateMany({where:{userId,revokedAt:null},data:{revokedAt:new Date()}}),
-    ]);
-    return {enabled:false,sessionsRevoked:true};
-  }
-
   async logout(refreshToken: string) {
     try{
       const {sessionId,secret}=this.parseRefreshToken(refreshToken);
@@ -105,5 +79,79 @@ export class AuthService {
       if(session && await argon2.verify(session.refreshTokenHash,secret)) await this.prisma.session.update({where:{id:session.id},data:{revokedAt:new Date()}});
     }catch{/* Logout is intentionally idempotent. */}
     return {ok:true};
+  }
+
+  /**
+   * Perfil do usuário autenticado, lido do banco.
+   *
+   * O app não deve deduzir identidade a partir do que ele mesmo enviou no login
+   * (ou de um payload de token): quem responde por email, nome e papel é o
+   * registro em `User`. Usamos um `select` explícito para que o `passwordHash`
+   * jamais entre na resposta, mesmo que alguém adicione campos ao modelo.
+   */
+  async me(user: AuthenticatedUser) {
+    const found = await this.prisma.user.findUnique({
+      where: { id: user.sub },
+      select: { id: true, name: true, email: true, role: true, merchantId: true, status: true },
+    });
+    // Sem registro (ou de outro tenant que o token não alcança): não vaza existência.
+    if (!found || found.status !== 'ACTIVE') throw new UnauthorizedException('Session is no longer valid');
+    return found;
+  }
+
+  /**
+   * Troca a senha do próprio usuário autenticado.
+   *
+   * A senha atual é exigida como prova de posse: sem ela, um access token
+   * roubado (ou um celular desbloqueado) bastaria para tomar a conta. A sessão
+   * de quem pediu **sobrevive** — derrubá-la expulsaria o usuário do app logo
+   * depois de uma ação legítima —, mas as outras caem, que é o ponto de trocar
+   * a senha quando se suspeita de invasão.
+   */
+  async changePassword(user: AuthenticatedUser, dto: ChangePasswordDto) {
+    const target = await this.prisma.user.findUnique({ where: { id: user.sub } });
+    if (!target) throw new UnauthorizedException('Invalid credentials');
+    // Mesma mensagem do login: não damos um oráculo de senha por um endpoint
+    // que o atacante só alcança já autenticado.
+    if (!(await argon2.verify(target.passwordHash, dto.currentPassword))) {
+      throw new UnauthorizedException('Invalid credentials');
+    }
+
+    const passwordHash = await argon2.hash(dto.newPassword, PASSWORD_HASH_OPTIONS);
+    const revokeOthers = dto.revokeOtherSessions !== false;
+
+    const result = await this.prisma.$transaction(async (tx) => {
+      // `updateMany` não aceita `select`: lemos os ids antes para poder avisar
+      // cada sessionId no outbox, e só então revogamos.
+      const otherSessions = revokeOthers
+        ? await tx.session.findMany({
+            where: { userId: target.id, revokedAt: null, id: { not: user.sessionId } },
+            select: { id: true },
+          })
+        : [];
+      if (otherSessions.length > 0) {
+        await tx.session.updateMany({
+          where: { id: { in: otherSessions.map((s) => s.id) } },
+          data: { revokedAt: new Date() },
+        });
+      }
+      await tx.user.update({
+        where: { id: target.id },
+        // Zera tentativas e desbloqueia: a senha nova precisa funcionar já.
+        data: { passwordHash, failedLoginCount: 0, lockedUntil: null },
+      });
+      return otherSessions.map((s) => s.id);
+    });
+
+    if (result.length > 0) {
+      await this.authEvents.publishSessionRevoked({
+        tenantId: user.tenantId,
+        userId: target.id,
+        reason: 'password-changed',
+        sessionIds: result,
+      });
+    }
+
+    return { ok: true, revokedSessions: result.length, sessionsRevoked: revokeOthers };
   }
 }

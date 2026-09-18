@@ -1,5 +1,10 @@
-import { IsInt, IsOptional, IsString, Max, Min, MinLength } from 'class-validator';
+import { IsInt, IsOptional, IsString, IsUUID, Max, Min, MinLength } from 'class-validator';
 export class CreateCreditRequestDto {
+  @IsInt() @Min(30000) @Max(1000000) amountCents:number;
+  @IsInt() @Min(10) @Max(180) dailyInstallments:number;
+}
+export class AdminCreateCreditRequestDto {
+  @IsUUID() userId: string;
   @IsInt() @Min(30000) @Max(1000000) amountCents:number;
   @IsInt() @Min(10) @Max(180) dailyInstallments:number;
 }

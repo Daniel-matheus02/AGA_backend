@@ -85,6 +85,7 @@ model Tenant {
   trackers  Tracker[]
   payments  Payment[]
   policies  InsurancePolicy[]
+  geofences Geofence[]
 }
 
 model User {
@@ -101,8 +102,8 @@ model User {
   passwordHash       String
   failedLoginCount   Int        @default(0)
   lockedUntil        DateTime?
-  mfaEnabled         Boolean    @default(false)
-  mfaSecretEncrypted String?
+  lastBlockedAt      DateTime?
+  lastBlockReason    String?
   createdAt          DateTime   @default(now())
   updatedAt          DateTime   @updatedAt
   sessions           Session[]
@@ -307,6 +308,7 @@ model Tracker {
   points      TrackingPoint[]
   alerts      TrackingAlert[]
   policies    InsurancePolicy[]
+  geofenceStates TrackerGeofenceState[]
 
   @@unique([tenantId, plate])
   @@index([tenantId, status, lastSeenAt])
@@ -339,6 +341,44 @@ model TrackingAlert {
   createdAt   DateTime @default(now())
 
   @@index([trackerId, resolvedAt, createdAt])
+}
+
+// Cerca digital (geofencing). O escopo é sempre o tenant: toda cerca ativa de um
+// tenant é avaliada para todos os rastreadores desse mesmo tenant.
+//
+// `vertices` guarda o polígono como [{ lat, lng }, ...] em Json, e não PostGIS:
+// o Postgres de produção não tem a extensão habilitada e o Prisma 7 ainda não
+// expõe tipo geometry nativo (exigiria `Unsupported(...)` + $queryRaw). O
+// volume aqui é de dezenas de cercas por ping, não milhões de pontos.
+model Geofence {
+  id        String   @id @default(uuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name      String
+  kind      String   @default("POLYGON")
+  vertices  Json
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  states    TrackerGeofenceState[]
+
+  // ingest() filtra exatamente por este par a cada ping recebido.
+  @@index([tenantId, active])
+}
+
+// Último estado conhecido de (rastreador, cerca). Existe para alertar apenas na
+// TRANSIÇÃO dentro↔fora — sem esta linha, cada ping dentro da cerca geraria um
+// alerta novo. onDelete: Cascade nas duas pontas para não deixar estado órfão
+// quando um rastreador ou uma cerca é removido.
+model TrackerGeofenceState {
+  trackerId  String
+  tracker    Tracker  @relation(fields: [trackerId], references: [id], onDelete: Cascade)
+  geofenceId String
+  geofence   Geofence @relation(fields: [geofenceId], references: [id], onDelete: Cascade)
+  isInside   Boolean
+  updatedAt  DateTime @updatedAt
+
+  @@id([trackerId, geofenceId])
 }
 
 model Notification {

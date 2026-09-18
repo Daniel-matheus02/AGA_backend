@@ -22,7 +22,7 @@ flowchart LR
 
 ## Módulos
 
-- `auth`: sessão, JWT, refresh rotation, bloqueio por tentativas e MFA.
+- `auth`: sessão, JWT, refresh rotation e bloqueio por tentativas.
 - `credit`: solicitação, análise, aprovação e conta de crédito.
 - `marketplace`: produtos, pedidos, autorização do cliente, razão e repasses.
 - `tracking`: ingestão assinada, histórico, frota e alertas.

@@ -13,7 +13,6 @@ Este repositório entrega uma base defensiva, mas não substitui revisão indepe
 - Rotação a cada refresh.
 - Detecção de reutilização: ao reutilizar token revogado, todas as sessões do usuário são encerradas.
 - Bloqueio temporário após cinco falhas de login.
-- MFA/TOTP disponível; em produção, `ADMIN_MFA_REQUIRED=true`.
 - Cada requisição autenticada valida se a sessão e o usuário continuam ativos.
 
 ### Autorização
@@ -56,9 +55,8 @@ Este repositório entrega uma base defensiva, mas não substitui revisão indepe
 ### Dados e auditoria
 
 - CPF e CNPJ são representados por hash para busca exata sem armazenamento aberto nesta base.
-- Segredos de MFA são cifrados com AES-256-GCM.
 - Auditoria registra autor, rota, IP, user-agent, request ID e hash do corpo sanitizado.
-- Senhas, tokens e códigos TOTP são removidos antes da auditoria.
+- Senhas e tokens são removidos antes da auditoria.
 
 ## Requisitos de produção
 

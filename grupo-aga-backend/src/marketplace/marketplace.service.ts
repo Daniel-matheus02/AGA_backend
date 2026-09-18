@@ -2,7 +2,7 @@ import { BadRequestException, ForbiddenException, Injectable, NotFoundException 
 import { PrismaService } from '../database/prisma.service';
 import { EventsService } from '../events/events.service';
 import { AuthenticatedUser } from '../common/auth.types';
-import { CreateOrderDto, CreateProductDto } from './dto';
+import { CreateOrderDto, CreateProductDto, CreateCategoryDto, AdminCreateProductDto } from './dto';
 import { assertBalanced } from '../common/services/money';
 
 @Injectable()
@@ -11,6 +11,32 @@ export class MarketplaceService {
 
   listProducts(user:AuthenticatedUser,category?:string){
     return this.prisma.product.findMany({where:{tenantId:user.tenantId,active:true,...(category?{category}:{})},include:{merchant:{select:{id:true,tradeName:true}}},orderBy:{createdAt:'desc'},take:200});
+  }
+
+  listCategories(user:AuthenticatedUser){
+    return this.prisma.product.groupBy({
+      by:['category'],
+      where:{tenantId:user.tenantId},
+      _count:{_all:true},
+      orderBy:{category:'asc'},
+    });
+  }
+
+  async createCategory(user:AuthenticatedUser,dto:CreateCategoryDto){
+    // Uma categoria só existe no schema através de produtos. Insere um produto
+    // "placeholder" inativo nessa nova categoria para que ela apareça na curadoria.
+    const merchant=await this.prisma.merchant.findFirst({where:{tenantId:user.tenantId,active:true}});
+    if(!merchant) throw new BadRequestException('Nenhum lojista ativo disponível');
+    const name='Oferta em '+dto.name;
+    const existing=await this.prisma.product.findFirst({where:{tenantId:user.tenantId,merchantId:merchant.id,name}});
+    if(existing) throw new BadRequestException('Categoria já existe');
+    return this.prisma.product.create({data:{tenantId:user.tenantId,merchantId:merchant.id,name,category:dto.name,priceCents:0n,description:'Categoria criada para o marketplace.',active:false}});
+  }
+
+  async createAdminProduct(user:AuthenticatedUser,dto:AdminCreateProductDto){
+    const merchant=await this.prisma.merchant.findFirst({where:{id:dto.merchantId,tenantId:user.tenantId}});
+    if(!merchant) throw new BadRequestException('Lojista não encontrado');
+    return this.prisma.product.create({data:{tenantId:user.tenantId,merchantId:merchant.id,name:dto.name,description:dto.description,category:dto.category,priceCents:BigInt(dto.priceCents)}});
   }
 
   async createProduct(user:AuthenticatedUser,dto:CreateProductDto){

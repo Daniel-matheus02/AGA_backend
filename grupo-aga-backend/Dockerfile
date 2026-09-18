@@ -25,4 +25,5 @@ COPY --from=build /app/prisma.config.ts ./prisma.config.ts
 COPY --from=build /app/package*.json ./
 USER aga
 EXPOSE 3000
-CMD ["node", "dist/main.js"]
+# Aplica as migrações e roda o seed idempotente antes de subir a API (Railway).
+CMD ["sh", "-c", "npx prisma migrate deploy && npx prisma db seed && node dist/main.js"]
