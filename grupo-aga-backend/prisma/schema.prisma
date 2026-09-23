@@ -358,6 +358,13 @@ model Geofence {
   kind      String   @default("POLYGON")
   vertices  Json
   active    Boolean  @default(true)
+  // Cor da cerca no mapa e na lista (hex `#rrggbb`). Guardada em vez de derivada
+  // do id/nome porque é escolha do operador: a mesma cerca pode ser verde numa
+  // operação e laranja noutra, e a cor é o que ele usa para distinguir cercas no
+  // mapa. O default é o azul histórico do desenho do Google Maps, para que as
+  // cercas já existentes (coluna nula após a migration) continuem com o mesmo
+  // aspeto no frontend.
+  color     String   @default("#0967d8")
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   states    TrackerGeofenceState[]

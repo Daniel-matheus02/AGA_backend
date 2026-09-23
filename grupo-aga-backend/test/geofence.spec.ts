@@ -404,3 +404,90 @@ describe('cerca digital — isolamento por tenant', () => {
     expect(result.deleted).toBe(true);
   });
 });
+
+describe('cerca digital — edição (updateGeofence)', () => {
+  /** Prisma falso mínimo para o caminho de edição. */
+  function editablePrisma(found: any = { id: 'g1' }) {
+    const updates: any[] = [];
+    const findFirstArgs: any[] = [];
+    const prisma = {
+      geofence: {
+        findFirst: async (args: any) => {
+          findFirstArgs.push(args);
+          return found;
+        },
+        update: async (args: any) => {
+          updates.push(args);
+          return { id: args.where.id, ...args.data };
+        },
+      },
+    };
+    return { prisma, updates, findFirstArgs };
+  }
+
+  it('exige o tenant na busca (um UUID de outro cliente não pode ser editado)', async () => {
+    const { prisma, findFirstArgs, updates } = editablePrisma(null);
+    const { service } = buildService(null, prisma);
+
+    await expect(
+      service.updateGeofence(admin('tenant-9'), 'fence-de-outro', { name: 'Nova' } as any),
+    ).rejects.toThrow('Geofence not found');
+
+    expect(findFirstArgs[0].where).toEqual({ id: 'fence-de-outro', tenantId: 'tenant-9' });
+    expect(updates).toHaveLength(0);
+  });
+
+  it('altera apenas a cor sem tocar em nome, vértices ou active', async () => {
+    const { prisma, updates } = editablePrisma();
+    const { service } = buildService(null, prisma);
+
+    await service.updateGeofence(admin('tenant-1'), 'g1', { color: '#25b742' } as any);
+
+    // O `data` do update tem de conter SÓ a cor: mandar os outros campos
+    // sobrescreveria ajustes que outro separador possa ter gravado entretanto.
+    expect(updates[0].data).toEqual({ color: '#25b742' });
+    expect(updates[0].where).toEqual({ id: 'g1' });
+  });
+
+  it('normaliza os vértices quando a edição os inclui', async () => {
+    const { prisma, updates } = editablePrisma();
+    const { service } = buildService(null, prisma);
+
+    // Vem com o ponto de fecho duplicado: deve ser removido, igual à criação.
+    await service.updateGeofence(admin('tenant-1'), 'g1', { vertices: [...SQUARE, SQUARE[0]] } as any);
+
+    expect(updates[0].data.vertices).toHaveLength(4);
+  });
+
+  it('devolve 400 (não 500) para polígono degenerado na edição', async () => {
+    const { prisma, updates } = editablePrisma();
+    const { service } = buildService(null, prisma);
+
+    await expect(
+      service.updateGeofence(admin('tenant-1'), 'g1', { vertices: [SQUARE[0], SQUARE[1], SQUARE[0]] } as any),
+    ).rejects.toThrow(BadRequestException);
+
+    // A cerca fica intacta: nada foi gravado com um polígono inválido.
+    expect(updates).toHaveLength(0);
+  });
+
+  it('renomear não envia vertices nem active no data', async () => {
+    const { prisma, updates } = editablePrisma();
+    const { service } = buildService(null, prisma);
+
+    await service.updateGeofence(admin('tenant-1'), 'g1', { name: 'Zona Norte' } as any);
+
+    expect(updates[0].data).toEqual({ name: 'Zona Norte' });
+    expect('vertices' in updates[0].data).toBe(false);
+    expect('active' in updates[0].data).toBe(false);
+  });
+
+  it('permite alternar active e preserva o resto', async () => {
+    const { prisma, updates } = editablePrisma();
+    const { service } = buildService(null, prisma);
+
+    await service.updateGeofence(admin('tenant-1'), 'g1', { active: false } as any);
+
+    expect(updates[0].data).toEqual({ active: false });
+  });
+});

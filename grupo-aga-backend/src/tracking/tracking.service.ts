@@ -5,12 +5,39 @@ import { Prisma } from '../generated/prisma/client';
 import { PrismaService } from '../database/prisma.service';
 import { EventsService } from '../events/events.service';
 import { AuthenticatedUser } from '../common/auth.types';
-import { TrackingIngestDto, CreateGeofenceDto } from './dto';
+import { TrackingIngestDto, CreateGeofenceDto, UpdateGeofenceDto } from './dto';
 import { isPointInPolygon, normalizePolygon, readPolygonFromJson, GeoVertex } from './geo';
 
 // Teto de cercas por tenant. Cada cerca ativa é reavaliada a cada ping de GPS de
 // cada veículo do tenant, por isso o limite protege o custo da ingestão.
 const MAX_GEOFENCES_PER_TENANT = 200;
+
+/**
+ * Converte um valor `Decimal` do Prisma em número, ou `null` se não for finito.
+ *
+ * Por que isto existe: `Tracker.lastLatitude/lastLongitude/lastSpeedKph` são
+ * colunas `Decimal` e o `fleet()` devolve a linha crua do Prisma. O `Decimal` do
+ * Prisma é uma instância de classe e o `JSON.stringify` chama o `toJSON()` dela,
+ * produzindo uma STRING (`"3.0742"`). Converter aqui mantém o contrato do
+ * endpoint explícito: `latitude`/`longitude`/`speedKph` saem como NÚMERO.
+ *
+ * ATENÇÃO — não troque isto por spread (`{...t}`): o spread copia apenas as
+ * propriedades PRÓPRIAS do `Decimal` (`s`, `e`, `d`) e descarta o protótipo onde
+ * vivem `toString`/`toNumber`/`toJSON`. O resultado é um object literal
+ * `{"s":-1,"e":0,"d":[3,742000]}` que o `Number()` do frontend converte em `NaN`
+ * — e o mapa do rastreamento fica vazio com a base cheia de posições válidas.
+ * Sempre chamar um MÉTODO do Decimal, nunca copiar as suas propriedades.
+ */
+function decimalToNumber(value: unknown): number | null {
+  if (value == null) return null;
+  if (typeof value === 'object' && typeof (value as { toNumber?: unknown }).toNumber === 'function') {
+    const parsed = (value as { toNumber: () => number }).toNumber();
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  // Já vem número/string (ex.: campo não-Decimal): aceita e valida.
+  const parsed = Number(value as number | string);
+  return Number.isFinite(parsed) ? parsed : null;
+}
 
 @Injectable()
 export class TrackingService{
@@ -157,7 +184,18 @@ export class TrackingService{
     return this.prisma.trackingPoint.findMany({where:{trackerId,recordedAt:{gte:from?new Date(from):new Date(Date.now()-24*3600_000),lte:to?new Date(to):new Date()}},orderBy:{recordedAt:'asc'},take:5000});
   }
   async fleet(user:AuthenticatedUser,status?:string){
-    return this.prisma.tracker.findMany({where:{tenantId:user.tenantId,...(status?{status:status as any}:{})},include:{user:{select:{id:true,name:true,email:true}},alerts:{where:{resolvedAt:null},orderBy:{createdAt:'desc'},take:5}},orderBy:[{status:'asc'},{lastSeenAt:'desc'}],take:1000});
+    const trackers=await this.prisma.tracker.findMany({where:{tenantId:user.tenantId,...(status?{status:status as any}:{})},include:{user:{select:{id:true,name:true,email:true}},alerts:{where:{resolvedAt:null},orderBy:{createdAt:'desc'},take:5}},orderBy:[{status:'asc'},{lastSeenAt:'desc'}],take:1000});
+    // Normaliza os Decimal em NÚMERO antes de sair do servidor. A atribuição é
+    // feita campo a campo de propósito: `{...t}` copiaria só as propriedades
+    // próprias do Decimal (`s`,`e`,`d`) e perderia o protótipo, transformando a
+    // coordenada num object literal que o frontend não consegue ler (ver
+    // `decimalToNumber`).
+    return trackers.map((t)=>{
+      t.lastLatitude=decimalToNumber(t.lastLatitude) as typeof t.lastLatitude;
+      t.lastLongitude=decimalToNumber(t.lastLongitude) as typeof t.lastLongitude;
+      t.lastSpeedKph=decimalToNumber(t.lastSpeedKph) as typeof t.lastSpeedKph;
+      return t;
+    });
   }
   async resolveAlert(user:AuthenticatedUser,alertId:string){
     const alert=await this.prisma.trackingAlert.findFirst({where:{id:alertId,tracker:{tenantId:user.tenantId}}});
@@ -174,7 +212,7 @@ export class TrackingService{
     return this.prisma.geofence.findMany({
       where:{tenantId:user.tenantId},
       orderBy:{createdAt:'desc'},
-      select:{id:true,name:true,kind:true,vertices:true,active:true,createdAt:true,updatedAt:true},
+      select:{id:true,name:true,kind:true,vertices:true,active:true,color:true,createdAt:true,updatedAt:true},
     });
   }
 
@@ -204,8 +242,47 @@ export class TrackingService{
         // normalizada por normalizePolygon logo acima.
         vertices:vertices as unknown as Prisma.InputJsonValue,
         active:dto.active ?? true,
+        // Sem `color` no body, deixa o default do schema (`#0967d8`) decidir —
+        // assim o azul existe num sítio só (o banco) e não duplicado aqui.
+        ...(dto.color ? { color:dto.color } : {}),
       },
-      select:{id:true,name:true,kind:true,vertices:true,active:true,createdAt:true,updatedAt:true},
+      select:{id:true,name:true,kind:true,vertices:true,active:true,color:true,createdAt:true,updatedAt:true},
+    });
+  }
+
+  /**
+   * Edita uma cerca existente. Campos ausentes no body ficam como estão.
+   *
+   * Todas as alterações passam por um `findFirst` com `tenantId` antes do update:
+   * um UUID adivinhado não pode renomear nem mover a cerca de outro cliente.
+   */
+  async updateGeofence(user:AuthenticatedUser,id:string,dto:UpdateGeofenceDto){
+    // O filtro por tenant vive no `where` do updateMany (abaixo), mas este
+    // findFirst existe para distinguir "não existe / não é meu" (404) de
+    // "existe mas nada mudou" — sem ele, um id de outro tenant e um id inexistente
+    // seriam indistinguíveis de um update sem efeito.
+    const fence=await this.prisma.geofence.findFirst({where:{id,tenantId:user.tenantId},select:{id:true}});
+    if(!fence) throw new NotFoundException('Geofence not found');
+
+    const data:Prisma.GeofenceUpdateInput={};
+    if(dto.name!==undefined) data.name=dto.name;
+    if(dto.color!==undefined) data.color=dto.color;
+    if(dto.active!==undefined) data.active=dto.active;
+    if(dto.vertices!==undefined){
+      // Mesma normalização da criação: o DTO garante ≥3 vértices enviados, mas
+      // o arredondamento e o ponto de fecho duplicado são responsabilidade do
+      // serviço. Erro de entrada vira 400, não 500.
+      try{
+        data.vertices=normalizePolygon(dto.vertices) as unknown as Prisma.InputJsonValue;
+      }catch(err){
+        throw new BadRequestException(err instanceof Error ? err.message : 'Polígono inválido.');
+      }
+    }
+
+    return this.prisma.geofence.update({
+      where:{id:fence.id},
+      data,
+      select:{id:true,name:true,kind:true,vertices:true,active:true,color:true,createdAt:true,updatedAt:true},
     });
   }
 

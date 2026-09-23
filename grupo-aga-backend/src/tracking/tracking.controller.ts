@@ -1,11 +1,11 @@
-import { Body, Controller, Delete, Get, Headers, Param, Post, Query, Req } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Headers, Param, Patch, Post, Query, Req } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import { Request } from 'express';
 import { Public } from '../common/decorators/public.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { AuthenticatedUser } from '../common/auth.types';
-import { TrackingIngestDto, CreateGeofenceDto } from './dto';
+import { TrackingIngestDto, CreateGeofenceDto, UpdateGeofenceDto } from './dto';
 import { TrackingService } from './tracking.service';
 @ApiTags('tracking')
 @Controller('tracking')
@@ -22,5 +22,9 @@ export class TrackingController{
   // surgir uma rota GET ':id' genérica no futuro.
   @Roles('ADMIN','TRACKING_OPERATOR') @Get('admin/geofences') listGeofences(@CurrentUser()u:AuthenticatedUser){return this.service.listGeofences(u)}
   @Roles('ADMIN','TRACKING_OPERATOR') @Post('admin/geofences') createGeofence(@CurrentUser()u:AuthenticatedUser,@Body()d:CreateGeofenceDto){return this.service.createGeofence(u,d)}
+  // PATCH (não PUT): a edição é parcial por desenho — o frontend manda só o que
+  // mudou, para renomear uma cerca sem reenviar (e arriscar sobrescrever) os
+  // vértices que outro separador possa ter ajustado.
+  @Roles('ADMIN','TRACKING_OPERATOR') @Patch('admin/geofences/:id') updateGeofence(@CurrentUser()u:AuthenticatedUser,@Param('id')id:string,@Body()d:UpdateGeofenceDto){return this.service.updateGeofence(u,id,d)}
   @Roles('ADMIN','TRACKING_OPERATOR') @Delete('admin/geofences/:id') deleteGeofence(@CurrentUser()u:AuthenticatedUser,@Param('id')id:string){return this.service.deleteGeofence(u,id)}
 }
