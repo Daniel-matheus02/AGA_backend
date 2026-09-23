@@ -18,6 +18,8 @@
     "prisma:deploy": "prisma migrate deploy",
     "prisma:seed": "tsx prisma/seed.ts",
     "db:studio": "prisma studio",
+    "sim": "tsx scripts/simulate-fleet.ts",
+    "sim:stop": "node scripts/simulate-fleet-stop.mjs",
     "test:security": "jest --config test/jest-security.json --runInBand --forceExit"
   },
   "dependencies": {

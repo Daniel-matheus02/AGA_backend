@@ -7,3 +7,10 @@ src/generated/prisma
 *.log
 .DS_Store
 *.tsbuildinfo
+
+# Simulador de frota — ferramenta de teste LOCAL, não deve ir para o GitHub.
+# Os arquivos existem só na máquina de quem desenvolve; a lista é por caminho
+# exato (e não `scripts/`) para não ignorar os scripts de produção que vivem na
+# mesma pasta (check-source, hash-password, sign-*-webhook).
+scripts/simulate-fleet.ts
+scripts/simulate-fleet-stop.mjs
